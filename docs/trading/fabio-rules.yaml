@@ -1,0 +1,179 @@
+# Programmable rule set: Fabio Valentini order-flow scalping (Direction -> Location -> Aggression)
+# Source video: https://youtu.be/tvERE-Beu2U
+#
+# Conventions
+#   source: video      -> stated by Fabio in this video / its published summaries
+#   source: default    -> numeric value chosen to make the discretionary rule computable; tune in backtest
+# All times America/New_York. Ticks are NQ ticks (0.25 pt) unless noted.
+
+version: 1
+instrument:
+  symbol: NQ            # use MNQ for testing / small accounts
+  alt_symbols: [MNQ, ES, MES]
+  tick_size: 0.25
+
+# ---------------------------------------------------------------------------
+# 1. Required data and derived features
+# ---------------------------------------------------------------------------
+data_requirements:
+  - tick_trades_with_aggressor_side   # needed for real CVD and big trades; OHLCV is not enough
+  - bars_1m
+  - bars_5m
+
+features:
+  cvd:
+    definition: "running sum over session of (ask_volume - bid_volume) per trade"
+    reset: session_open          # 18:00 ET Globex open (default); also compute an RTH-anchored copy from 09:30
+    slope_lookback_bars: 3       # default, 1m bars
+  volume_profile:
+    session_profile: prior_rth   # POC/VAH/VAL of previous RTH session
+    value_area_pct: 0.70         # default (standard)
+    bin_size_ticks: 4            # default
+  lvn:
+    definition: "profile bin whose volume < lvn_ratio * POC volume and is bounded above and below by higher-volume bins"
+    lvn_ratio: 0.20              # default
+    profile_scope: current_impulse_leg   # source: video (LVNs found inside the move)
+    zone_padding_ticks: 2        # default
+  big_trade:
+    min_contracts: {NQ: 30, MNQ: 30, ES: 150, MES: 150}   # source: video summaries (30 lots on NQ)
+    aggregation_window_ms: 250   # default: sum same-side prints at one price within window
+  footprint_imbalance:
+    ratio: 3.0                   # default: ask vol >= 3x bid vol diagonally (or inverse)
+    min_stacked_levels: 3        # default
+  vwap:
+    anchor: rth_open
+
+# ---------------------------------------------------------------------------
+# 2. Market state classifier (Direction)
+# ---------------------------------------------------------------------------
+market_state:
+  imbalance_up:
+    all:
+      - "close_5m > prior.VAH for >= 2 consecutive 5m bars"      # default acceptance test
+      - "cvd_slope(5m, 3) > 0"
+  imbalance_down:
+    all:
+      - "close_5m < prior.VAL for >= 2 consecutive 5m bars"
+      - "cvd_slope(5m, 3) < 0"
+  balance:
+    any:
+      - "prior.VAL <= close_5m <= prior.VAH and not imbalance_up and not imbalance_down"
+  failed_breakout_up:           # feeds mean-reversion model
+    all:
+      - "high > prior.VAH within last 6 bars_5m"                 # default window
+      - "close_5m back inside [prior.VAL, prior.VAH]"
+      - "any(cvd_bearish_divergence(1m, lookback=3), aggression_fading_up)"   # source: video
+  failed_breakout_down:
+    all:
+      - "low < prior.VAL within last 6 bars_5m"
+      - "close_5m back inside [prior.VAL, prior.VAH]"
+      - "any(cvd_bullish_divergence(1m, lookback=3), aggression_fading_down)"
+
+helpers:
+  cvd_bearish_divergence: "price makes higher high vs prior swing AND cvd makes lower high"
+  cvd_bullish_divergence: "price makes lower low vs prior swing AND cvd makes higher low"
+  aggression_fading_up: "big buy trades printing at highs while price fails to advance >= 4 ticks in 3 bars (absorption)"
+  aggression_fading_down: "big sell trades printing at lows while price fails to decline >= 4 ticks in 3 bars"
+
+# ---------------------------------------------------------------------------
+# 3. Setups
+# ---------------------------------------------------------------------------
+setups:
+
+  trend_model:
+    source: video
+    allowed_sessions:
+      - {start: "09:30", end: "11:30"}      # NY session (source: video); end time default
+    blocked_sessions:
+      - {start: "03:00", end: "03:30", reason: "London open fake breakouts"}   # source: video
+    long:
+      direction: "market_state == imbalance_up"
+      location: "price enters lvn_zone on pullback within current up impulse"
+      aggression:
+        any:
+          - "big_trade.side == buy within lvn_zone"
+          - "footprint_imbalance.buy_stacked within lvn_zone"
+        and: "cvd_slope(1m, 3) >= 0"
+      entry: market_on_aggression_print
+      stop: "min(aggressive_print_price, lvn_zone.low) - 2 ticks"          # source: video (1-2 tick buffer)
+      target: "prior_balance.POC"                                           # source: video
+    short:
+      direction: "market_state == imbalance_down"
+      location: "price enters lvn_zone on pullback within current down impulse"
+      aggression:
+        any:
+          - "big_trade.side == sell within lvn_zone"
+          - "footprint_imbalance.sell_stacked within lvn_zone"
+        and: "cvd_slope(1m, 3) <= 0"
+      entry: market_on_aggression_print
+      stop: "max(aggressive_print_price, lvn_zone.high) + 2 ticks"
+      target: "prior_balance.POC"
+    cancel_if:
+      - "no qualifying aggression within 5 bars_1m of entering zone"      # default
+      - "price closes through far side of lvn_zone"
+
+  mean_reversion_model:
+    source: video
+    preferred_conditions: ["London session", "compressed / low-range days"]   # source: video
+    allowed_sessions:
+      - {start: "03:00", end: "08:30"}      # default London window
+      - {start: "09:30", end: "15:45"}      # allowed in NY only on balance days
+    short:
+      direction: "market_state == failed_breakout_up"
+      location: "pullback to prior.VAH or an lvn_zone just inside value"
+      aggression: "big_trade.side == sell OR footprint_imbalance.sell_stacked at location"
+      entry: market_on_aggression_print
+      stop: "failed_breakout.high + 2 ticks"
+      target: "prior_balance.POC"
+    long:
+      direction: "market_state == failed_breakout_down"
+      location: "pullback to prior.VAL or an lvn_zone just inside value"
+      aggression: "big_trade.side == buy OR footprint_imbalance.buy_stacked at location"
+      entry: market_on_aggression_print
+      stop: "failed_breakout.low - 2 ticks"
+      target: "prior_balance.POC"
+    cancel_if:
+      - "price accepts back outside value (2 closes_5m outside)"
+
+# ---------------------------------------------------------------------------
+# 4. Global filters (apply to every setup)
+# ---------------------------------------------------------------------------
+filters:
+  min_reward_risk: 2.0                     # source: video
+  no_trade_in_balance_for_trend_model: true
+  news_blackout_minutes: {before: 2, after: 5}   # default, high-impact USD events
+  require_all_three: [direction, location, aggression]   # source: video; missing one -> flat
+
+# ---------------------------------------------------------------------------
+# 5. Trade management
+# ---------------------------------------------------------------------------
+management:
+  move_stop_to_breakeven:
+    any:
+      - "unrealized_R >= 1.0"                                   # default
+      - "abs(cvd_change since entry) >= 2 * median_abs_cvd_change_per_5bars AND sign agrees with position"   # source: video ("strong CVD -> BE early"), threshold default
+  exit_full_at_target: true                # source: video (close at POC)
+  trail_beyond_target:
+    enabled: false                         # only on strong trend days (source: video); leave off for automation v1
+  time_stop_bars_1m: 30                    # default
+
+# ---------------------------------------------------------------------------
+# 6. Risk
+# ---------------------------------------------------------------------------
+risk:
+  base_risk_pct_per_trade: 0.25            # source: video
+  max_risk_pct_per_trade: 0.50             # default cap
+  scale_up_only_with_session_profit: true  # source: video (use day's profit to fund larger risk)
+  scale_rule: "risk_pct = base + min(max - base, 0.5 * realized_session_pnl_pct)"   # default formula
+  max_losses_per_day: 3                    # source: video
+  daily_loss_limit_pct: 1.0                # default
+  expected_win_rate: 0.50                  # source: video (for sanity-checking backtests)
+
+# ---------------------------------------------------------------------------
+# 7. AI reviewer (optional layer; never the sole trigger)
+# ---------------------------------------------------------------------------
+ai_reviewer:
+  role: "approve or veto a rules-engine signal; write journal entry"
+  inputs: [signal_json, features_snapshot, chart_png_1m, chart_png_5m_with_profile]
+  must_output: {decision: "approve|veto", reason: string, checklist: {direction: bool, location: bool, aggression: bool}}
+  veto_if_any_checklist_false: true
