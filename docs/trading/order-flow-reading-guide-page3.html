@@ -1,0 +1,130 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Order Flow, Page 3</title>
+<style>
+:root{--bg:#121417;--panel:#1a1d21;--ink:#eceef1;--ink2:#aab1ba;--muted:#6f7782;--hi:#c7860f;--buy:#12a37a;--sell:#e0453a;--blue:#5b8def}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;width:900px}
+.wrap{padding:28px 24px}h1{font-size:30px;margin:0 0 4px}.sub{color:var(--ink2);margin:0 0 20px}
+.card{background:var(--panel);border-radius:12px;padding:18px 18px 14px;margin-bottom:18px}
+h2{font-size:21px;margin:0 0 2px}.h2s{color:var(--ink2);font-size:15px;margin:0 0 10px}
+.num{display:inline-block;width:26px;height:26px;border-radius:13px;background:var(--hi);color:#121417;text-align:center;font-weight:700;line-height:26px;margin-right:6px}
+table{border-collapse:collapse;width:100%;font-size:14.5px}td,th{padding:7px 8px;border-bottom:1px solid #2a2f35;text-align:left;vertical-align:top}th{color:var(--muted);font-weight:600;font-size:13px}
+.r{text-align:right;font-weight:700;white-space:nowrap}.g{color:var(--buy)}.s{color:var(--sell)}.h{color:var(--hi)}.b{color:var(--blue)}.m{color:var(--ink2)}
+.tl{display:grid;grid-template-columns:78px 1fr;gap:0}.tl .t{color:var(--hi);font-weight:700;padding:8px 0;border-bottom:1px solid #2a2f35;font-size:15px}.tl .d{padding:8px 0;border-bottom:1px solid #2a2f35;font-size:14.5px;color:var(--ink2)}.tl .d b{color:var(--ink)}
+.tag{display:inline-block;border-radius:6px;padding:0 6px;font-size:12.5px;font-weight:700;margin-right:6px;color:#121417}
+.lessons{display:grid;grid-template-columns:1fr 1fr;gap:10px}.lessons div{background:#15181b;border-radius:10px;padding:10px 12px;font-size:14px;color:var(--ink2)}.lessons b{display:block;color:var(--ink);font-size:15px;margin-bottom:2px}
+.foot{color:var(--muted);font-size:13px;margin-top:8px}
+</style></head><body><div class="wrap">
+<h1>Order Flow, Page 3: A Full Trading Morning</h1>
+<p class="sub">One made-up New York morning on micro Nasdaq (MNQ), from prep to shutdown. Three trades: two wins, one loss, and two setups skipped on purpose. Times are Eastern.</p>
+
+<div class="card"><h2><span class="num">1</span>8:45 AM: Prep before the open (10 minutes)</h2>
+<p class="h2s">Mark the levels first. They are your "Location" for the whole morning.</p>
+<table>
+<tr><th>Level</th><th>Price</th><th>Why it matters</th></tr>
+<tr><td class="h">Overnight POC (upper node)</td><td class="r">20,452</td><td class="m">Fat volume above us: a natural target if price breaks out up</td></tr>
+<tr><td class="b">Yesterday's VAH</td><td class="r">20,420</td><td class="m">Top of value. Failed breakout short or breakout long starts here</td></tr>
+<tr><td>Yesterday's POC</td><td class="r">20,400</td><td class="m">Middle of value: target for mean-reversion trades</td></tr>
+<tr><td class="b">Yesterday's VAL</td><td class="r">20,380</td><td class="m">Bottom of value</td></tr>
+<tr><td>News check</td><td class="r">—</td><td class="m">No high-impact reports after 9:30 today (check an economic calendar each morning)</td></tr>
+<tr><td>Plan</td><td class="r">—</td><td class="m">Price opens <b style="color:var(--ink)">inside</b> yesterday's value → balance. Start with the mean-reversion playbook; switch to trend only if price is accepted above VAH</td></tr>
+<tr><td>Risk</td><td class="r">1R = $25</td><td class="m">0.25% of $10,000. Stop for the day after 3 losses</td></tr>
+</table></div>
+
+<div class="card"><h2><span class="num">2</span>9:30 to 11:55 AM: the chart</h2>
+<p class="h2s">Numbered circles are trades. ✗ marks are setups skipped on purpose. Details for each are in section 3.</p>
+<svg id="ch" width="816" height="640"></svg></div>
+
+<div class="card"><h2><span class="num">3</span>Play-by-play</h2>
+<div class="tl">
+<div class="t">9:30</div><div class="d">Open. Price chops between 20,404 and 20,418, <b>inside yesterday's value</b>. Balance, so no trend trades.</div>
+<div class="t">9:35</div><div class="d"><span class="tag" style="background:#aab1ba">✗ A</span>A big buy bubble prints in the middle of the range. <b>Skipped:</b> no level, no edge.</div>
+<div class="t">9:55</div><div class="d">Price pokes above VAH (20,420) and reaches 20,430, but CVD makes a <b>lower high</b> than at 9:40. Divergence. Watching for failure.</div>
+<div class="t">10:05</div><div class="d">Bar closes back inside value at 20,414. <b>The breakout failed.</b></div>
+<div class="t">10:10</div><div class="d"><span class="tag" style="background:#12a37a">1</span><b>Short 20,418</b> on the retest of VAH as big sell bubbles print. Stop 20,424 (6 pts). Target POC 20,400. Size: 2 MNQ ($24 risk).</div>
+<div class="t">10:25</div><div class="d">Price reaches 20,401. <b>Trade 1 closed at the POC: +18 pts = +3R (+$72).</b></div>
+<div class="t">10:35</div><div class="d"><span class="tag" style="background:#aab1ba">✗ B</span>Buyers push from the POC, but price is still inside value. <b>Skipped:</b> no trend trade until price is accepted above VAH.</div>
+<div class="t">10:45</div><div class="d">Two 5-minute closes above VAH with CVD rising. <b>Now out of balance (up).</b> Switch to the trend playbook. A fast move leaves a thin spot (LVN) at 20,425 to 20,442.</div>
+<div class="t">11:00</div><div class="d"><span class="tag" style="background:#e0453a">2</span><b>Long 20,433</b> on the pullback into the LVN with big buy bubbles. Stop 20,427. Target overnight POC 20,452.</div>
+<div class="t">11:05</div><div class="d">Sellers absorb the buyers and CVD turns down. <b>Stopped out: −1R (−$24).</b> Normal. The setup was valid; this one just didn't work.</div>
+<div class="t">11:20</div><div class="d"><span class="tag" style="background:#12a37a">3</span>Second pullback into the LVN. CVD barely drops; big buys print at 20,428. <b>Long 20,431</b>, stop 20,425, target 20,452.</div>
+<div class="t">11:25</div><div class="d">Price reaches 20,437 (+1R). <b>Stop moved to entry.</b> Worst case is now $0.</div>
+<div class="t">11:40</div><div class="d">Target hit at 20,452. <b>Trade 3: +21 pts = +3.5R (+$84).</b></div>
+<div class="t">11:45</div><div class="d"><b>Done for the day.</b> Good result, price is now in fat volume (no edge), and lunch hour is slow. Write the journal and close the platform.</div>
+</div></div>
+
+<div class="card"><h2><span class="num">4</span>The trade journal</h2>
+<table>
+<tr><th>#</th><th>Setup</th><th>Direction / Location / Aggression</th><th class="r">Result</th></tr>
+<tr><td>1</td><td>Failed breakout short</td><td class="m">Balance + CVD divergence / VAH retest / sell bubbles</td><td class="r g">+3R · +$72</td></tr>
+<tr><td>2</td><td>Trend long</td><td class="m">Out of balance up / LVN / buy bubbles</td><td class="r s">−1R · −$24</td></tr>
+<tr><td>3</td><td>Trend long</td><td class="m">Out of balance up / LVN / buy bubbles, CVD holding</td><td class="r g">+3.5R · +$84</td></tr>
+<tr><td></td><td><b>Total</b></td><td class="m">3 trades, 2 wins, 1 loss (followed every rule)</td><td class="r g">+5.5R · +$132</td></tr>
+</table>
+<p class="foot">This is a good day on purpose, to show the process. Many real days are flat or red. The goal is following the rules every time, not winning every trade.</p></div>
+
+<div class="card"><h2><span class="num">5</span>Lessons from this morning</h2>
+<div class="lessons">
+<div><b>The plan changed with the market</b>Started in balance (mean reversion), switched to trend only after acceptance above VAH.</div>
+<div><b>A loss is part of the system</b>Trade 2 followed every rule and still lost. Small loss, move on. One 3.5R winner covers three of them.</div>
+<div><b>Skipping is a skill</b>Both ✗ setups had real buying, but no location. Not trading them saved money.</div>
+<div><b>Stop when the edge is gone</b>After the target, price sat in fat volume at lunch. No level, no aggression, so no more trades.</div>
+</div>
+<p class="foot">Educational illustration with made-up data. Not financial advice. Practice on a simulated account first.</p></div>
+</div>
+<script>
+const NS='http://www.w3.org/2000/svg';
+function el(p,t,a,txt){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(txt!==undefined)e.textContent=txt;p.appendChild(e);return e}
+const C={buy:'#12a37a',sell:'#e0453a',hi:'#c7860f',ink:'#eceef1',ink2:'#aab1ba',muted:'#6f7782',grid:'#2a2f35',blue:'#5b8def'};
+function T(p,x,y,t,col,o){o=o||{};return el(p,'text',Object.assign({x,y,fill:col,'font-size':o.fs||13,'font-weight':o.fw||600,'text-anchor':o.a||'start'},o.ex||{}),t)}
+const S=document.getElementById('ch');
+const cl=[20410,20404,20415,20408,20416,20424,20427,20414,20419,20410,20404,20401,20403,20412,20424,20438,20447,20437,20433,20425,20429,20434,20430,20438,20444,20449,20453,20450,20448,20451];
+const N=cl.length;const op=[20412],hi=[],lo=[];
+for(let i=0;i<N;i++){if(i>0)op[i]=cl[i-1];hi[i]=Math.max(op[i],cl[i])+2;lo[i]=Math.min(op[i],cl[i])-2}
+hi[6]=20430;hi[8]=20421;lo[11]=20400;lo[18]=20431;lo[19]=20423;lo[22]=20428;hi[26]=20454;
+const X0=62,X1=806,Y0=14,Y1=400,pmin=20372,pmax=20460;
+const y=p=>Y1-(p-pmin)/(pmax-pmin)*(Y1-Y0);const cw=(X1-X0)/N;const x=i=>X0+cw*(i+0.5);
+// zones
+el(S,'rect',{x:X0,y:y(20420),width:X1-X0,height:y(20380)-y(20420),fill:C.blue,opacity:0.11});
+el(S,'rect',{x:x(16)-cw/2,y:y(20442),width:X1-x(16)+cw/2,height:y(20425)-y(20442),fill:C.hi,opacity:0.14});
+el(S,'rect',{x:X0,y:y(20458),width:X1-X0,height:y(20446)-y(20458),fill:C.ink,opacity:0.06});
+for(let p=20380;p<=20460;p+=10){el(S,'line',{x1:X0,x2:X1,y1:y(p),y2:y(p),stroke:C.grid});T(S,X0-6,y(p)+4,p.toLocaleString(),C.muted,{a:'end',fw:400,fs:12})}
+[[20420,'yesterday VAH',C.blue],[20400,'yesterday POC',C.ink2],[20380,'yesterday VAL',C.blue],[20452,'overnight POC (target)',C.ink2]].forEach(([p,l,c])=>{el(S,'line',{x1:X0,x2:X1,y1:y(p),y2:y(p),stroke:c,'stroke-width':1.5,'stroke-dasharray':'5 4'});T(S,X0+4,y(p)-5,l,c,{fs:12})});
+T(S,X1-4,y(20425)+14,'LVN above (thin, fast move)',C.hi,{a:'end',fs:12});
+// candles
+for(let i=0;i<N;i++){const up=cl[i]>=op[i];const col=up?C.buy:C.sell;
+ el(S,'line',{x1:x(i),x2:x(i),y1:y(hi[i]),y2:y(lo[i]),stroke:col,'stroke-width':1.5});
+ const t=y(Math.max(op[i],cl[i])),b=y(Math.min(op[i],cl[i]));el(S,'rect',{x:x(i)-cw*0.32,y:t,width:cw*0.64,height:Math.max(b-t,2),rx:1.5,fill:col})}
+// bubbles
+[[1,20407,11,C.buy],[8,20420,11,C.sell],[8,20418,7,C.sell],[18,20432,11,C.buy],[22,20429,12,C.buy],[22,20431,8,C.buy]].forEach(([i,p,r,c])=>el(S,'circle',{cx:x(i),cy:y(p),r,fill:'none',stroke:c,'stroke-width':2.5}));
+// trade segments
+function trade(i0,i1,e,st,tg,n,col,above){
+ el(S,'line',{x1:x(i0),x2:x(i1),y1:y(st),y2:y(st),stroke:C.sell,'stroke-width':2,'stroke-dasharray':'3 3'});
+ el(S,'line',{x1:x(i0),x2:x(i1),y1:y(tg),y2:y(tg),stroke:C.buy,'stroke-width':2,'stroke-dasharray':'6 3'});
+ el(S,'line',{x1:x(i0),x2:x(i1),y1:y(e),y2:y(e),stroke:C.ink,'stroke-width':1.5});
+ const cy=above?y(Math.max(e,st,tg))-16:y(Math.min(e,st,tg))+16;
+ el(S,'circle',{cx:x(i0)-cw*0.9,cy:y(e),r:11,fill:col});T(S,x(i0)-cw*0.9,y(e)+5,n,'#121417',{a:'middle',fs:13,fw:800});
+}
+trade(8,11,20418,20424,20400,'1',C.buy);
+trade(18,19,20433,20427,20452,'2',C.sell);
+trade(22,26,20431,20425,20452,'3',C.buy);
+// skips
+function skip(i,p,l){el(S,'circle',{cx:x(i),cy:y(p),r:11,fill:'#aab1ba'});T(S,x(i),y(p)+5,'✗'+l,'#121417',{a:'middle',fs:11,fw:800})}
+skip(1,20394,'A');skip(13,20388,'B');
+T(S,x(5),y(20436),'fails ↓',C.ink2,{fs:12,a:'middle'});
+T(S,x(19)+14,y(20418),'stopped',C.sell,{fs:12});
+T(S,x(26),y(20460)+2,'target ✓',C.buy,{fs:12,a:'middle'});
+T(S,x(10),y(20396),'target ✓',C.buy,{fs:12,a:'middle'});
+// time axis
+['9:30','9:45','10:00','10:15','10:30','10:45','11:00','11:15','11:30','11:45'].forEach((t,k)=>T(S,x(k*3),Y1+18,t,C.muted,{a:'middle',fw:400,fs:12}));
+// CVD
+const cv=[0,-5,12,4,10,9,8,-8,-10,-20,-28,-34,-30,-18,0,18,30,26,28,14,18,26,25,34,42,48,54,52,50,52];
+const CY0=462,CY1=600;const mn=Math.min(...cv),mx=Math.max(...cv);const cy=v=>CY1-(v-mn)/(mx-mn)*(CY1-CY0);
+T(S,X0,CY0-14,'CVD',C.ink2,{fs:13});
+el(S,'line',{x1:X0,x2:X1,y1:cy(0),y2:cy(0),stroke:C.grid});
+el(S,'polyline',{points:cv.map((v,i)=>x(i)+','+cy(v)).join(' '),fill:'none',stroke:C.blue,'stroke-width':2.5,'stroke-linejoin':'round'});
+el(S,'line',{x1:x(2),y1:cy(12)-6,x2:x(6),y2:cy(8)-6,stroke:C.hi,'stroke-width':2,'stroke-dasharray':'5 3'});
+T(S,x(2),cy(12)-12,'lower high = divergence',C.hi,{fs:12});
+T(S,x(18),cy(14)+22,'turns down: trade 2 stopped',C.sell,{fs:12,a:'middle'});
+T(S,x(22)+6,cy(25)+22,'barely dips: trade 3 OK',C.buy,{fs:12});
+T(S,x(12),cy(30),'rising with the breakout',C.buy,{fs:12,a:'end'});
+['9:30','10:00','10:30','11:00','11:30'].forEach((t,k)=>T(S,x(k*6),632,t,C.muted,{a:'middle',fw:400,fs:12}));
+</script></body></html>

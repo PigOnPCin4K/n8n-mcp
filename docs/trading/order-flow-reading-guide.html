@@ -1,0 +1,145 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Order Flow Reading Guide</title>
+<style>
+:root{--bg:#121417;--panel:#1a1d21;--ink:#eceef1;--ink2:#aab1ba;--muted:#6f7782;--grid:#2a2f35;--buy:#12a37a;--sell:#e0453a;--hi:#c7860f;--blue:#5b8def}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;width:900px}
+.wrap{padding:28px 24px}
+h1{font-size:30px;margin:0 0 4px}.sub{color:var(--ink2);margin:0 0 20px;font-size:16px}
+.card{background:var(--panel);border-radius:12px;padding:18px 18px 14px;margin-bottom:18px}
+h2{font-size:21px;margin:0 0 2px}.h2s{color:var(--ink2);font-size:15px;margin:0 0 10px}
+svg text{font-family:inherit}
+.row{display:flex;gap:12px}.mini{flex:1;background:#15181b;border-radius:10px;padding:10px}
+.mini h3{margin:0 0 2px;font-size:17px}.mini p{margin:6px 0 0;color:var(--ink2);font-size:14px}
+.chk{display:flex;gap:10px}.chk div{flex:1;background:#15181b;border-radius:10px;padding:12px}
+.chk b{display:block;font-size:18px;margin-bottom:4px}.chk span{color:var(--ink2);font-size:14px}
+.num{display:inline-block;width:26px;height:26px;border-radius:13px;background:var(--hi);color:#121417;text-align:center;font-weight:700;line-height:26px;margin-right:6px}
+.foot{color:var(--muted);font-size:13px;margin-top:6px}
+</style></head><body><div class="wrap">
+<h1>How to Read Order Flow</h1>
+<p class="sub">An illustrated example of Fabio's <b>Direction → Location → Aggression</b> trend setup. Made-up data, drawn to teach.</p>
+
+<div class="card"><h2><span class="num">1</span>Price chart + volume profile</h2>
+<p class="h2s">The profile (right) shows how much traded at each price. Fat = market agreed on price. Thin = price moved fast.</p>
+<svg id="main" width="816" height="560"></svg></div>
+
+<div class="card"><h2><span class="num">2</span>CVD (cumulative volume delta), same timeline</h2>
+<p class="h2s">Running total of aggressive buys minus aggressive sells. Up = buyers hitting the ask. Down = sellers hitting the bid.</p>
+<svg id="cvd" width="816" height="220"></svg></div>
+
+<div class="card"><h2><span class="num">3</span>The 3 CVD patterns to recognize</h2>
+<p class="h2s">Top line = price. Bottom line = CVD.</p>
+<div class="row" id="pats"></div></div>
+
+<div class="card"><h2><span class="num">4</span>The order book (DOM / SuperDOM ladder)</h2>
+<p class="h2s">This is what you see in the NinjaTrader app. It shows orders <i>waiting</i> to trade, not trades that happened.</p>
+<svg id="dom" width="816" height="590"></svg></div>
+
+<div class="card"><h2><span class="num">5</span>Only trade when all three line up</h2>
+<div class="chk">
+<div><b>Direction</b><span>Out of balance, and CVD agrees with the move.</span></div>
+<div><b>Location</b><span>Price is back at a thin spot (LVN) or the edge of value.</span></div>
+<div><b>Aggression</b><span>Big trades (bubbles) print in your direction right there.</span></div></div>
+<p class="foot">Missing one? Stay flat. Risk 0.25% per trade, need 2:1 or better, stop after 3 losses. Educational illustration, not financial advice.</p></div>
+</div>
+<script>
+const NS='http://www.w3.org/2000/svg';
+function el(p,t,a,txt){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(txt!==undefined)e.textContent=txt;p.appendChild(e);return e}
+const C={buy:'#12a37a',sell:'#e0453a',hi:'#c7860f',ink:'#eceef1',ink2:'#aab1ba',muted:'#6f7782',grid:'#2a2f35',blue:'#5b8def'};
+// ---- candle path (closes) : upper balance -> selloff -> lower balance -> breakout -> pullback to LVN -> rally
+const closes=[88,89,87,89,90,88,87,89,88,90,88, 84,79,74,68, 66,64,67,65,63,66,64,67,65,63,66,65,64,
+  69,74,79,84, 81,78,76,77, 80,83,85,87,88,88.5];
+const N=closes.length;
+let OPN=[88.5],hi=[],lo=[],vol=[];
+for(let i=0;i<N;i++){if(i>0)OPN[i]=closes[i-1];const o=OPN[i],c=closes[i];
+ const fast=Math.abs(c-o)>=4;const wick=fast?0.6:1.4;
+ hi[i]=Math.max(o,c)+wick; lo[i]=Math.min(o,c)-wick; vol[i]=fast?40:100;}
+// pullback bottom candle 34 wicks into LVN
+lo[34]=74.6; lo[33]=77;
+// profile
+const pmin=58,pmax=94;const prof={};
+for(let i=0;i<N;i++){const r=hi[i]-lo[i];for(let p=Math.ceil(lo[i]);p<=Math.floor(hi[i]);p++){prof[p]=(prof[p]||0)+vol[i]/Math.max(r,1)*(i<11||(i>=15&&i<28)?2.2:0.5)}}
+// main svg
+const M=document.getElementById('main');const X0=46,X1=630,Y0=20,Y1=520;
+const y=p=>Y1-(p-pmin)/(pmax-pmin)*(Y1-Y0);const cw=(X1-X0)/N;const x=i=>X0+cw*(i+0.5);
+for(let p=60;p<=92;p+=4){el(M,'line',{x1:X0,x2:810,y1:y(p),y2:y(p),stroke:C.grid,'stroke-width':1});el(M,'text',{x:X0-8,y:y(p)+5,fill:C.muted,'font-size':13,'text-anchor':'end'},p)}
+// zones
+function zone(a,b,fill,label,lx){el(M,'rect',{x:X0,width:810-X0,y:y(b),height:y(a)-y(b),fill,opacity:0.13});}
+zone(84.5,91.5,C.blue);zone(61.5,68.5,C.blue);zone(71,80,C.hi);
+// profile bars
+const maxv=Math.max(...Object.values(prof));let poc=[0,0];
+for(const p in prof){if(+p>=78)if(prof[p]>poc[1])poc=[+p,prof[p]]}
+let lowPoc=[0,0];for(const p in prof){if(+p<70&&prof[p]>lowPoc[1])lowPoc=[+p,prof[p]]}
+for(const p in prof){const w=prof[p]/maxv*125;const isLVN=+p>=71&&+p<=80;
+ el(M,'rect',{x:642,y:y(+p)-5,width:Math.max(w,2),height:10,rx:2,fill:(+p===poc[0]||+p===lowPoc[0])?C.ink:(isLVN?C.hi:'#58606a')})}
+el(M,'text',{x:642,y:14,fill:C.ink2,'font-size':13},'Volume profile →');
+// candles
+for(let i=0;i<N;i++){const up=closes[i]>=OPN[i];const col=up?C.buy:C.sell;
+ el(M,'line',{x1:x(i),x2:x(i),y1:y(hi[i]),y2:y(lo[i]),stroke:col,'stroke-width':1.5});
+ const t=y(Math.max(OPN[i],closes[i])),b=y(Math.min(OPN[i],closes[i]));
+ el(M,'rect',{x:x(i)-cw*0.32,y:t,width:cw*0.64,height:Math.max(b-t,2),rx:1.5,fill:col})}
+// bubbles (big buy trades at LVN)
+[[34,75.2,13],[34,76.3,9],[35,76.2,11]].forEach(([i,p,r])=>el(M,'circle',{cx:x(i),cy:y(p),r,fill:'none',stroke:C.buy,'stroke-width':3}));
+// lines
+const entry=77,stop=74,target=poc[0];
+function hl(p,col,dash,lab,sx){el(M,'line',{x1:x(sx),x2:640,y1:y(p),y2:y(p),stroke:col,'stroke-width':2,'stroke-dasharray':dash});el(M,'text',{x:636,y:y(p)-6,fill:col,'font-size':14,'font-weight':700,'text-anchor':'end'},lab)}
+hl(target,C.ink,'6 4','',30);el(M,'text',{x:x(22),y:y(target)-7,fill:C.ink,'font-size':14,'font-weight':700},'TARGET: upper POC ('+target+')');hl(entry,C.buy,'','ENTRY 77',34);hl(stop,C.sell,'4 4','',34);el(M,'text',{x:636,y:y(stop)+17,fill:C.sell,'font-size':14,'font-weight':700,'text-anchor':'end'},'STOP 74 (below LVN + buffer)');
+// labels
+function lab(tx,ty,t,col,anchor){el(M,'text',{x:tx,y:ty,fill:col,'font-size':15,'font-weight':600,'text-anchor':anchor||'start'},t)}
+lab(x(1),y(92.8),'Earlier balance (fat volume)',C.blue);
+lab(x(15),y(59.6),'Balance: choppy, NO trend trades here',C.blue);
+lab(X0+4,y(72.2),'LVN = thin spot',C.hi);
+lab(x(28)-8,y(70.4),'Breakout ↑ = out of balance',C.ink2,'end');
+lab(x(33),y(71.4),'Big buy bubbles at LVN',C.buy);lab(x(33),y(70.1),'= aggression → take the trade',C.buy);
+el(M,'text',{x:810,y:y(poc[0])+4,fill:C.ink,'font-size':13,'text-anchor':'end','font-weight':700},'POC');
+el(M,'text',{x:810,y:y(lowPoc[0])+4,fill:C.ink,'font-size':13,'text-anchor':'end','font-weight':700},'POC');
+el(M,'text',{x:810,y:y(75)+4,fill:C.hi,'font-size':13,'text-anchor':'end','font-weight':700},'LVN');
+el(M,'text',{x:X0,y:548,fill:C.muted,'font-size':13},'Time →   (each bar = 5 minutes)');
+// ---- CVD
+const D=document.getElementById('cvd');let cv=[0],s=0;
+for(let i=0;i<N;i++){const d=closes[i]-OPN[i];s+=d*(Math.abs(d)>=4?60:25)+(i>=32&&i<=35?30:0);cv[i]=s}
+const cmin=Math.min(...cv),cmax=Math.max(...cv);const cy=v=>190-(v-cmin)/(cmax-cmin)*170;
+el(D,'line',{x1:X0,x2:X1,y1:cy(0),y2:cy(0),stroke:C.grid,'stroke-width':1});
+el(D,'polyline',{points:cv.map((v,i)=>x(i)+','+cy(v)).join(' '),fill:'none',stroke:C.blue,'stroke-width':2.5,'stroke-linejoin':'round'});
+el(D,'rect',{x:x(32)-cw/2,y:8,width:cw*4,height:196,fill:C.hi,opacity:0.12});
+function dl(tx,ty,t,col){el(D,'text',{x:tx,y:ty,fill:col,'font-size':14,'font-weight':600},t)}
+dl(x(11)+4,cy(cv[13])+26,'Sellers hit bids → CVD drops',C.sell);
+dl(x(28)-14,cy(cv[31])-12,'Buyers take over',C.buy);
+dl(X1+10,cy(cv[34])-24,'On the pullback,',C.hi);dl(X1+10,cy(cv[34])-6,'CVD barely drops:',C.hi);dl(X1+10,cy(cv[34])+12,'sellers are weak.',C.hi);dl(X1+10,cy(cv[34])+30,'Good sign for longs.',C.hi);
+el(D,'text',{x:X0,y:214,fill:C.muted,'font-size':13},'Time → (same bars as chart above)');
+// ---- patterns
+const P=document.getElementById('pats');
+const pats=[['Agreement','Price ↑ and CVD ↑. Real buying. Trade with it.',[1,2,2.5,3.5,4.5,5,6],[1,2,3,3.8,4.6,5.5,6.2],C.buy],
+ ['Divergence','Price makes a new high, CVD does not. Buyers running out. Watch for a failed breakout.',[1,3,5,3.5,4.5,6,5.5],[1,3,5.5,4,4.6,4.8,4.2],C.hi],
+ ['Absorption','CVD surges but price stalls. A big limit seller is soaking it up. Expect a turn.',[2,3,4,4.2,4.1,4.2,4.1],[1,2,3,4,5,6,7],C.sell]];
+pats.forEach(([t,d,pr,cd,col])=>{const box=document.createElement('div');box.className='mini';box.innerHTML='<h3 style="color:'+col+'">'+t+'</h3>';
+ const s=document.createElementNS(NS,'svg');s.setAttribute('width',230);s.setAttribute('height',150);box.appendChild(s);
+ const px=i=>8+i*36;
+ el(s,'text',{x:4,y:14,fill:C.muted,'font-size':12},'price');el(s,'text',{x:4,y:88,fill:C.muted,'font-size':12},'CVD');
+ el(s,'polyline',{points:pr.map((v,i)=>px(i)+','+(68-v*7)).join(' '),fill:'none',stroke:C.ink,'stroke-width':2.5});
+ el(s,'polyline',{points:cd.map((v,i)=>px(i)+','+(145-v*7.5)).join(' '),fill:'none',stroke:C.blue,'stroke-width':2.5});
+ const p=document.createElement('p');p.textContent=d;box.appendChild(p);P.appendChild(box)});
+// ---- DOM ladder
+const G=document.getElementById('dom');const rows=[];const last=20412.25;
+for(let k=6;k>=-6;k--)rows.push(last+k*0.25);
+const asks={20413.75:34,20413.5:41,20413.25:28,20413:22,20412.75:19,20412.5:12};
+const bids={20412.25:15,20412:24,20411.75:31,20411.5:260,20411.25:27,20411:33,20410.75:29};
+const rh=32,TOPY=40,cx=408;
+el(G,'text',{x:cx-150,y:26,fill:C.buy,'font-size':15,'font-weight':700,'text-anchor':'middle'},'BIDS (waiting to buy)');
+el(G,'text',{x:cx,y:26,fill:C.ink2,'font-size':15,'font-weight':700,'text-anchor':'middle'},'PRICE');
+el(G,'text',{x:cx+150,y:26,fill:C.sell,'font-size':15,'font-weight':700,'text-anchor':'middle'},'ASKS (waiting to sell)');
+rows.forEach((p,r)=>{const ry=TOPY+r*rh;const isLast=p===last;
+ el(G,'rect',{x:cx-290,y:ry,width:580,height:rh-2,fill:isLast?'#2c2410':'#15181b',rx:3});
+ el(G,'text',{x:cx,y:ry+21,fill:isLast?C.hi:C.ink,'font-size':15,'font-weight':isLast?700:400,'text-anchor':'middle'},p.toFixed(2));
+ if(bids[p]){const w=Math.min(bids[p],60)/60*170;el(G,'rect',{x:cx-55-w,y:ry+5,width:w,height:rh-12,rx:2,fill:C.buy,opacity:bids[p]>100?1:0.55});
+  el(G,'text',{x:cx-62-w,y:ry+21,fill:C.ink,'font-size':14,'text-anchor':'end','font-weight':bids[p]>100?700:400},bids[p])}
+ if(asks[p]){const w=asks[p]/60*170;el(G,'rect',{x:cx+55,y:ry+5,width:w,height:rh-12,rx:2,fill:C.sell,opacity:0.55});
+  el(G,'text',{x:cx+62+w,y:ry+21,fill:C.ink,'font-size':14,'font-weight':400},asks[p])}
+});
+const wy=TOPY+rows.indexOf(20411.5)*rh+20;
+el(G,'text',{x:12,y:wy-8,fill:C.buy,'font-size':14,'font-weight':700},'Big bid "wall"');
+el(G,'text',{x:12,y:wy+10,fill:C.ink2,'font-size':13},'(260 contracts)');
+const ly=TOPY+rows.indexOf(last)*rh+20;
+el(G,'text',{x:cx+295,y:ly-2,fill:C.hi,'font-size':14,'font-weight':700},'← last traded');
+el(G,'text',{x:cx+295,y:ly+15,fill:C.hi,'font-size':14,'font-weight':700},'   price');
+const notes=['• A market BUY eats the asks → price ticks up, CVD rises.','• A market SELL eats the bids → price ticks down, CVD falls.','• Walls can be pulled at any time. Trust trades that actually','  print (bubbles, CVD) more than orders that are just sitting.'];
+notes.forEach((t,i)=>el(G,'text',{x:20,y:TOPY+rows.length*rh+26+i*20,fill:C.ink2,'font-size':15},t));
+</script></body></html>
