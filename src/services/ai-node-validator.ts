@@ -237,14 +237,16 @@ export function validateAIAgent(
   }
 
   // 4. Check system message (RECOMMENDED)
-  if (!node.parameters.systemMessage) {
+  // Current agent versions store it under options.systemMessage; older configs used the top level
+  const systemMessage = node.parameters.options?.systemMessage ?? node.parameters.systemMessage;
+  if (!systemMessage) {
     issues.push({
       severity: 'info',
       nodeId: node.id,
       nodeName: node.name,
       message: `AI Agent "${node.name}" has no systemMessage. Consider adding one to define the agent's role, capabilities, and constraints.`
     });
-  } else if (node.parameters.systemMessage.trim().length < MIN_SYSTEM_MESSAGE_LENGTH) {
+  } else if (typeof systemMessage === 'string' && systemMessage.trim().length < MIN_SYSTEM_MESSAGE_LENGTH) {
     issues.push({
       severity: 'info',
       nodeId: node.id,

@@ -757,9 +757,11 @@ export class NodeSpecificValidators {
     }
 
     // Check system message (RECOMMENDED)
-    if (!config.systemMessage || (typeof config.systemMessage === 'string' && config.systemMessage.trim() === '')) {
-      suggestions.push('AI Agent works best with a system message that defines the agent\'s role, capabilities, and constraints. Set systemMessage to provide context.');
-    } else if (typeof config.systemMessage === 'string' && config.systemMessage.trim().length < 20) {
+    // Current agent versions store it under options.systemMessage; older configs used the top level
+    const systemMessage = config.options?.systemMessage ?? config.systemMessage;
+    if (!systemMessage || (typeof systemMessage === 'string' && systemMessage.trim() === '')) {
+      suggestions.push('AI Agent works best with a system message that defines the agent\'s role, capabilities, and constraints. Set options.systemMessage to provide context.');
+    } else if (typeof systemMessage === 'string' && systemMessage.trim().length < 20) {
       warnings.push({
         type: 'inefficient',
         property: 'systemMessage',
