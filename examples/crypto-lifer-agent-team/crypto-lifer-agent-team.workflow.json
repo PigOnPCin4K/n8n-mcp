@@ -1,0 +1,673 @@
+{
+  "name": "Crypto Lifer Agent Team (Paper Trading)",
+  "nodes": [
+    {
+      "id": "cl-1",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "cl-2",
+      "name": "Strategy Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Strategy Config - edit these values. Everything downstream reads from here.\nreturn [{\n  json: {\n    symbol: 'BTCUSDT',\n    // api.binance.com is geo-blocked in some regions; the public market-data mirror is not.\n    marketDataUrl: 'https://data-api.binance.vision/api/v3/klines',\n\n    // Paper account (no real orders are ever placed by this workflow)\n    startingEquity: 10000,\n    riskPerTradePct: 0.5,        // % of equity risked per trade (his stated rule was 1%)\n    minRewardRisk: 3,            // he rejects anything under 3:1\n    maxLeverage: 5,              // cap; his 20-100x is deliberately not copied\n    maxLossesPerDay: 2,          // stop for the day after 2 losing trades\n    lossStreakDownsize: 8,       // after N consecutive losses, risk is divided by 3 (his \"downsize 3x\" rule)\n    moveStopToBreakevenAtR: 0,   // 0 = off. Backtest: moving to break-even at +1R cut expectancy on every timeframe\n\n    // Which setups the Signal Engine may propose. Defaults follow backtest/RESULTS.md:\n    // only the 4h \"Model\" was positive after costs; 15m/1h lost money in every variant.\n    executionTimeframes: ['4h'],\n    enabledSetups: ['model_21_200'],   // also available: 'sma200_reclaim' (no edge in backtest), 'daily_body_reversal' (untested)\n    maxSignalAgeMinutes: 60,           // ignore signals from candles that closed longer ago than this\n\n    // Filters (backtest on 4h: stoch timing helped; regime, HTF and calendar filters lowered expectancy)\n    requireStochTiming: true,      // Stoch RSI below 30 in the last 3 bars and turning up (mirror for shorts)\n    requireRegimeAlignment: false, // longs only above the daily 200 SMA, shorts only below\n    requireHtfAlignment: false,    // next-higher timeframe must be on the same side of its 200 SMA\n    calendarBlackout: false,       // his rule: no entries Sat, Sun, Mon before 18:00 ET, Fri after 12:00 ET\n    // Add scheduled high-impact events (FOMC, CPI) as ISO dates; entries are blocked that day.\n    eventBlackoutDates: [],\n\n    telegramChatId: 'REPLACE_WITH_CHAT_ID'\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "cl-3",
+      "name": "Signal Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Signal Engine: fetches closed candles, computes the indicators Crypto Lifer uses\n// (21/50/200 SMA, Stoch RSI 14/14/3/3, RSI 14, ATR 14) and detects his setups\n// deterministically. The agents only judge these candidates; they never invent levels.\nconst cfg = $input.first().json;\nconst TIMEFRAMES = ['15m', '1h', '4h', '1d', '3d', '1w'];\nconst TF_MS = { '15m': 9e5, '1h': 36e5, '4h': 144e5, '1d': 864e5, '3d': 2592e5, '1w': 6048e5 };\nconst NEXT_TF = { '15m': '1h', '1h': '4h', '4h': '1d', '1d': '3d', '3d': '1w' };\n\nasync function fetchClosedBars(interval) {\n  const raw = await this.helpers.httpRequest({\n    method: 'GET',\n    url: cfg.marketDataUrl,\n    qs: { symbol: cfg.symbol, interval, limit: 1000 },\n    json: true,\n  });\n  const now = Date.now();\n  return raw\n    .filter((k) => Number(k[6]) < now) // drop the still-forming candle\n    .map((k) => ({ t: Number(k[0]), o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] }));\n}\n\nfunction sma(values, n) {\n  const out = new Array(values.length).fill(null);\n  let sum = 0;\n  for (let i = 0; i < values.length; i++) {\n    sum += values[i];\n    if (i >= n) sum -= values[i - n];\n    if (i >= n - 1) out[i] = sum / n;\n  }\n  return out;\n}\n\nfunction rsi(closes, n = 14) {\n  const out = new Array(closes.length).fill(null);\n  let gain = 0, loss = 0;\n  for (let i = 1; i < closes.length; i++) {\n    const d = closes[i] - closes[i - 1];\n    const g = Math.max(d, 0), l = Math.max(-d, 0);\n    if (i <= n) {\n      gain += g / n; loss += l / n;\n      if (i === n) out[i] = loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);\n    } else {\n      gain = (gain * (n - 1) + g) / n; loss = (loss * (n - 1) + l) / n;\n      out[i] = loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);\n    }\n  }\n  return out;\n}\n\nfunction stochRsi(closes) {\n  const r = rsi(closes, 14);\n  const raw = r.map((v, i) => {\n    const win = i < 27 || v === null ? [] : r.slice(i - 13, i + 1);\n    const lo = Math.min(...win), hi = Math.max(...win);\n    const value = hi === lo ? 0 : ((v - lo) / (hi - lo)) * 100;\n    return win.length ? value : null;\n  });\n  const smooth = (arr, n) => arr.map((_, i) => {\n    const win = arr.slice(Math.max(0, i - n + 1), i + 1);\n    return win.length < n || win.some((x) => x === null) ? null : win.reduce((a, b) => a + b, 0) / n;\n  });\n  const k = smooth(raw, 3);\n  return { rsi: r, k, d: smooth(k, 3) };\n}\n\nfunction atr(bars, n = 14) {\n  const out = new Array(bars.length).fill(null);\n  let prev = null;\n  for (let i = 1; i < bars.length; i++) {\n    const tr = Math.max(bars[i].h - bars[i].l, Math.abs(bars[i].h - bars[i - 1].c), Math.abs(bars[i].l - bars[i - 1].c));\n    prev = prev === null ? tr : (prev * (n - 1) + tr) / n;\n    if (i >= n) out[i] = prev;\n  }\n  return out;\n}\n\nconst round = (x, d = 2) => (x === null || x === undefined ? null : Math.round(x * 10 ** d) / 10 ** d);\n\nfunction analyse(tf, bars) {\n  const closes = bars.map((b) => b.c);\n  const s21 = sma(closes, 21), s50 = sma(closes, 50), s200 = sma(closes, 200);\n  const st = stochRsi(closes), a = atr(bars);\n  const i = bars.length - 1, b = bars[i];\n  const kRecent = st.k.slice(i - 2, i + 1);\n  const last10 = bars.slice(i - 9, i + 1);\n  return {\n    tf, i, bars, s21, s200, atrArr: a,\n    snapshot: {\n      timeframe: tf,\n      closeTime: new Date(b.t).toISOString(),\n      close: b.c,\n      sma21: round(s21[i]), sma50: round(s50[i]), sma200: round(s200[i]),\n      aboveSma200: s200[i] !== null ? b.c > s200[i] : null,\n      sma200Rising: s200[i] !== null && s200[i - 10] !== null ? s200[i] > s200[i - 10] : null,\n      rsi14: round(st.rsi[i], 1),\n      stochK: round(st.k[i], 1), stochD: round(st.d[i], 1),\n      stochState: st.k[i] === null ? null : st.k[i] < 20 ? 'low' : st.k[i] > 80 ? 'high' : 'mid',\n      stochTurningUp: st.k[i] > st.d[i] && Math.min(...kRecent) < 30,\n      stochTurningDown: st.k[i] < st.d[i] && Math.max(...kRecent) > 70,\n      atr14: round(a[i]),\n      // Distance from the 21 in ATRs: he takes profit when price is \"far from the 21\"\n      stretchFrom21Atr: a[i] ? round((b.c - s21[i]) / a[i], 2) : null,\n      // \"Tight MAs\": 21 close to the 200\n      sma21To200GapAtr: a[i] && s200[i] ? round((s21[i] - s200[i]) / a[i], 2) : null,\n      consolidating: a[i] ? Math.max(...last10.map((x) => x.h)) - Math.min(...last10.map((x) => x.l)) < 2.5 * a[i] : null,\n    },\n  };\n}\n\nconst series = {};\nfor (const tf of TIMEFRAMES) series[tf] = analyse(tf, await fetchClosedBars.call(this, tf));\nconst snap = Object.fromEntries(TIMEFRAMES.map((tf) => [tf, series[tf].snapshot]));\nconst price = series['15m'].snapshot.close;\n\n// Higher-timeframe regime: weekly and daily close vs their 200 SMA\nconst dailyBull = snap['1d'].aboveSma200, weeklyBull = snap['1w'].aboveSma200;\nconst regime = dailyBull && weeklyBull ? 'bull' : !dailyBull && !weeklyBull ? 'bear' : 'transition';\n\n// \"200 ladder\": the 200 SMAs of each timeframe act as the next magnets / targets\nconst ladder = TIMEFRAMES.filter((tf) => snap[tf].sma200 !== null).map((tf) => ({ tf, sma200: snap[tf].sma200 }));\nconst ladderAbove = ladder.filter((x) => x.sma200 > price).sort((a, b) => a.sma200 - b.sma200);\nconst ladderBelow = ladder.filter((x) => x.sma200 < price).sort((a, b) => b.sma200 - a.sma200);\n\n// Calendar rules he states repeatedly (US Eastern time)\nconst nowEt = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));\nconst dow = nowEt.getDay(), hour = nowEt.getHours();\nconst isoDate = new Date().toISOString().slice(0, 10);\nconst calendarReasons = [];\nif (dow === 6 || dow === 0) calendarReasons.push('weekend (low liquidity, stop hunts)');\nif (dow === 1 && hour < 18) calendarReasons.push('\"false move Monday\" before 18:00 ET');\nif (dow === 5 && hour >= 12) calendarReasons.push('Friday afternoon');\nconst eventDay = (cfg.eventBlackoutDates || []).includes(isoDate);\n\n// Signals come from the last closed candle of the setup timeframe; execution is at the latest price.\nfunction buildCandidate(setup, tf, direction, signalBar, stop, extra = {}) {\n  const entry = price;\n  const risk = Math.abs(entry - stop);\n  if ((direction === 'long' && stop >= entry) || (direction === 'short' && stop <= entry)) return;\n  const sign = direction === 'long' ? 1 : -1;\n  const ladderTargets = (direction === 'long' ? ladderAbove : ladderBelow)\n    .map((x) => ({ label: `${x.tf} 200 SMA`, price: x.sma200, rr: round((sign * (x.sma200 - entry)) / risk, 2) }));\n  const s = snap[tf], next = NEXT_TF[tf];\n  const wantAbove = direction === 'long';\n  return {\n    id: `${setup}:${tf}:${direction}`,\n    signalKey: `${setup}:${tf}:${direction}@${signalBar.t}`,\n    signalAgeMinutes: Math.round((Date.now() - (signalBar.t + TF_MS[tf])) / 60000),\n    setup, timeframe: tf, direction,\n    entry: round(entry), stop: round(stop),\n    riskPct: round((risk / entry) * 100, 3),\n    targets: [{ label: '3R', price: round(entry + sign * 3 * risk), rr: 3 }, ...ladderTargets.slice(0, 3)],\n    filters: {\n      regimeAligned: wantAbove ? dailyBull === true : dailyBull === false,\n      htfAligned: next ? snap[next].aboveSma200 === wantAbove : null,\n      stochTiming: wantAbove ? s.stochTurningUp : s.stochTurningDown,\n      notStretched: Math.abs(s.stretchFrom21Atr ?? 0) < 3,\n      calendarClear: calendarReasons.length === 0,\n    },\n    ...extra,\n  };\n}\n\nconst candidates = [];\nfor (const tf of cfg.executionTimeframes) {\n  const { bars, i, s21, s200, atrArr } = series[tf];\n  const b = bars[i], p = bars[i - 1], a = atrArr[i];\n  if (!a || s200[i] === null) continue;\n  const lows10 = Math.min(...bars.slice(i - 9, i + 1).map((x) => x.l));\n  const highs10 = Math.max(...bars.slice(i - 9, i + 1).map((x) => x.h));\n\n  // Setup A, \"the Model\" (his 2025-2026 core): above the 200, 21 above the 200,\n  // price drifts sideways/down until the 21 touches it. Short is the mirror (\"inverse model\").\n  if (cfg.enabledSetups.includes('model_21_200')) {\n    if (b.c > s200[i] && s21[i] > s200[i] && b.l <= s21[i]) {\n      const stop = Math.min(s200[i], lows10) - 0.1 * a;\n      if (b.c - stop >= 0.5 * a && b.c - stop <= 4 * a) candidates.push(buildCandidate('model_21_200', tf, 'long', b, stop));\n    }\n    if (b.c < s200[i] && s21[i] < s200[i] && b.h >= s21[i]) {\n      const stop = Math.max(s200[i], highs10) + 0.1 * a;\n      if (stop - b.c >= 0.5 * a && stop - b.c <= 4 * a) candidates.push(buildCandidate('model_21_200', tf, 'short', b, stop));\n    }\n  }\n\n  // Setup B, 200 SMA close cross (his \"go-to signal\" 2024-2025, \"the one indicator\" on the 1h)\n  if (cfg.enabledSetups.includes('sma200_reclaim')) {\n    if (p.c < s200[i - 1] && b.c > s200[i]) {\n      candidates.push(buildCandidate('sma200_reclaim', tf, 'long', b, Math.min(s200[i], lows10) - 0.1 * a));\n    }\n    if (p.c > s200[i - 1] && b.c < s200[i]) {\n      candidates.push(buildCandidate('sma200_reclaim', tf, 'short', b, Math.max(s200[i], highs10) + 0.1 * a));\n    }\n  }\n}\n\n// Setup C, daily candle-body reversal (\"green candle next to a red one\" / tweezer) with stochastics at an extreme\nif (cfg.enabledSetups.includes('daily_body_reversal')) {\n  const { bars, i } = series['1d'];\n  const b = bars[i], p = bars[i - 1], d = snap['1d'];\n  if (p.c < p.o && b.c > b.o && b.c >= p.o && d.stochK !== null && d.stochK < 30) {\n    candidates.push(buildCandidate('daily_body_reversal', '1d', 'long', b, Math.min(b.l, p.l) - 0.1 * d.atr14));\n  }\n  if (p.c > p.o && b.c < b.o && b.c <= p.o && d.stochK !== null && d.stochK > 70) {\n    candidates.push(buildCandidate('daily_body_reversal', '1d', 'short', b, Math.max(b.h, p.h) + 0.1 * d.atr14));\n  }\n}\n\nconst valid = candidates.filter(Boolean);\nconst eligible = valid.filter((c) =>\n  c.signalAgeMinutes <= cfg.maxSignalAgeMinutes && !eventDay &&\n  (!cfg.requireStochTiming || c.filters.stochTiming) &&\n  (!cfg.requireRegimeAlignment || c.filters.regimeAligned) &&\n  (!cfg.requireHtfAlignment || c.filters.htfAligned !== false) &&\n  (!cfg.calendarBlackout || c.filters.calendarClear));\n\nreturn [{\n  json: {\n    config: cfg,\n    asOf: new Date().toISOString(),\n    symbol: cfg.symbol,\n    price,\n    regime: { label: regime, dailyAbove200: dailyBull, weeklyAbove200: weeklyBull, threeDayAbove200: snap['3d'].aboveSma200 },\n    ladder: { above: ladderAbove, below: ladderBelow },\n    calendar: { blackout: calendarReasons.length > 0, reasons: calendarReasons, eventDay, easternTime: nowEt.toISOString().slice(0, 16) },\n    timeframes: snap,\n    candidates: eligible,\n    rejectedByFilters: valid.filter((c) => !eligible.includes(c)).map((c) => ({ id: c.id, signalAgeMinutes: c.signalAgeMinutes, filters: c.filters })),\n    // Recent closed 15m bars, used by the Paper Ledger to check stops/targets\n    recentBars15m: series['15m'].bars.slice(-96),\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "cl-4",
+      "name": "Paper Ledger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Paper Ledger: keeps two paper books in workflow static data and checks them against the\n// 15m bars closed since the last run.\n//   desk   - trades the agent team approved (one position at a time)\n//   shadow - every fresh signal the engine produced, taken mechanically at 3R\n// Comparing the two shows whether the agents add anything over the plain rules.\n// Static data persists only for active (production) executions.\nconst data = $input.first().json;\nconst cfg = data.config;\nconst COST = 0.0014; // fees + slippage, round trip, as a fraction of entry price\nconst store = $getWorkflowStaticData('global');\nstore.ledger = store.ledger || { equity: cfg.startingEquity, open: null, closed: [], lossStreak: 0, day: { date: null, losses: 0, pnlR: 0 } };\nstore.shadow = store.shadow || { open: [], stats: { trades: 0, wins: 0, totalR: 0 } };\nstore.seenSignals = store.seenSignals || [];\nconst L = store.ledger, shadow = store.shadow;\nL.stats = L.stats || { trades: 0, wins: 0, totalR: 0 };\nconst today = data.asOf.slice(0, 10);\nif (L.day.date !== today) L.day = { date: today, losses: 0, pnlR: 0 };\n\n// Walk new bars; returns { exitPrice, reason, barTime } when the trade closes, else undefined.\n// If stop and target are both inside one bar, the stop counts first (conservative).\nfunction step(trade, onBreakeven) {\n  const sign = trade.direction === 'long' ? 1 : -1;\n  let exit;\n  for (const b of data.recentBars15m.filter((x) => x.t > trade.lastCheckedBar)) {\n    trade.lastCheckedBar = b.t;\n    const adverse = trade.direction === 'long' ? b.l : b.h;\n    const favourable = trade.direction === 'long' ? b.h : b.l;\n    if (sign * (adverse - trade.stop) <= 0) {\n      exit = { exitPrice: trade.stop, reason: trade.stop === trade.entry ? 'breakeven stop' : 'stop loss', barTime: b.t };\n      break;\n    }\n    if (sign * (favourable - trade.target) >= 0) {\n      exit = { exitPrice: trade.target, reason: 'target', barTime: b.t };\n      break;\n    }\n    if (onBreakeven && cfg.moveStopToBreakevenAtR > 0 && trade.stop !== trade.entry && sign * (favourable - trade.entry) >= cfg.moveStopToBreakevenAtR * trade.riskPerUnit) {\n      trade.stop = trade.entry;\n      onBreakeven(trade);\n    }\n  }\n  return exit;\n}\nconst netR = (t, exitPrice) => Math.round((((t.direction === 'long' ? 1 : -1) * (exitPrice - t.entry) - COST * t.entry) / t.riskPerUnit) * 100) / 100;\n\nconst events = [];\nif (L.open) {\n  const t = L.open;\n  const exit = step(t, (tr) => events.push({ type: 'stop_to_breakeven', trade: { ...tr } }));\n  if (exit) {\n    const r = netR(t, exit.exitPrice);\n    L.equity = Math.round((L.equity + r * t.riskUsd) * 100) / 100;\n    L.day.pnlR = Math.round((L.day.pnlR + r) * 100) / 100;\n    if (r < 0) { L.day.losses += 1; L.lossStreak += 1; } else { L.lossStreak = 0; }\n    L.stats.trades += 1;\n    L.stats.wins += r > 0 ? 1 : 0;\n    L.stats.totalR = Math.round((L.stats.totalR + r) * 100) / 100;\n    const done = { ...t, exitPrice: exit.exitPrice, exitTime: new Date(exit.barTime).toISOString(), reason: exit.reason, netR: r };\n    L.closed = [done, ...L.closed].slice(0, 50);\n    L.open = null;\n    events.push({ type: 'closed', reason: exit.reason, trade: done, equity: L.equity });\n  } else {\n    // His discretionary exit: price far from the 21 with stochastics at an extreme\n    const s = data.timeframes[t.timeframe];\n    const sign = t.direction === 'long' ? 1 : -1;\n    if (s && sign * (s.stretchFrom21Atr ?? 0) > 3 && s.stochState === (t.direction === 'long' ? 'high' : 'low')) {\n      events.push({ type: 'stretch_warning', trade: { ...t }, note: `price ${s.stretchFrom21Atr} ATR from the ${t.timeframe} 21 SMA with stochastics ${s.stochState}` });\n    }\n  }\n}\n\nconst stillOpen = [];\nfor (const t of shadow.open) {\n  const exit = step(t);\n  if (!exit) {\n    stillOpen.push(t);\n    continue;\n  }\n  const r = netR(t, exit.exitPrice);\n  shadow.stats.trades += 1;\n  shadow.stats.wins += r > 0 ? 1 : 0;\n  shadow.stats.totalR = Math.round((shadow.stats.totalR + r) * 100) / 100;\n}\nshadow.open = stillOpen;\n\n// Each signal is reviewed once, however many runs see the same closed candle\nconst fresh = data.candidates.filter((c) => !store.seenSignals.includes(c.signalKey));\nstore.seenSignals = [...fresh.map((c) => c.signalKey), ...store.seenSignals].slice(0, 200);\nconst lastBar = Date.parse(data.timeframes['15m'].closeTime);\nfor (const c of fresh) {\n  if (shadow.open.some((t) => t.id === c.id)) continue;\n  shadow.open.push({ id: c.id, setup: c.setup, timeframe: c.timeframe, direction: c.direction, entry: c.entry, stop: c.stop,\n    target: c.targets[0].price, riskPerUnit: Math.abs(c.entry - c.stop), lastCheckedBar: lastBar });\n}\n\nconst blockedReasons = [];\nif (L.open) blockedReasons.push('a paper position is already open');\nif (L.day.losses >= cfg.maxLossesPerDay) blockedReasons.push(`daily loss limit reached (${L.day.losses} losses today)`);\nif (fresh.length === 0) blockedReasons.push('no new eligible signals');\n\nconst expectancy = (st) => (st.trades ? Math.round((st.totalR / st.trades) * 100) / 100 : null);\nreturn [{\n  json: {\n    ...data,\n    candidates: fresh,\n    recentBars15m: undefined,\n    ledger: { equity: L.equity, open: L.open, lossStreak: L.lossStreak, today: L.day, lastClosed: L.closed.slice(0, 5) },\n    comparison: {\n      desk: { ...L.stats, expectancyR: expectancy(L.stats) },\n      shadowRules: { ...shadow.stats, open: shadow.open.length, expectancyR: expectancy(shadow.stats) },\n    },\n    events,\n    hasEvents: events.length > 0,\n    needsReview: blockedReasons.length === 0,\n    blockedReasons,\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "cl-5",
+      "name": "Trade Updates?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        880,
+        120
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "hasEvents-check",
+              "leftValue": "={{ $json.hasEvents }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cl-6",
+      "name": "Format Trade Updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Format Trade Updates: one message summarising closes, break-even moves and stretch warnings.\nconst { events, symbol, ledger, comparison } = $input.first().json;\nconst lines = events.map((e) => {\n  const t = e.trade;\n  let line = `Take-profit warning on ${t.direction} ${symbol}: ${e.note}`;\n  if (e.type === 'closed') line = `CLOSED ${t.direction} ${symbol} (${t.setup}) at ${t.exitPrice}: ${e.reason}, ${t.netR}R. Equity ${e.equity} USD`;\n  if (e.type === 'stop_to_breakeven') line = `Stop moved to break-even on ${t.direction} ${symbol} (${t.entry})`;\n  return line;\n});\nlines.push(`Agent desk: ${comparison.desk.trades} trades, ${comparison.desk.totalR}R | Plain rules: ${comparison.shadowRules.trades} trades, ${comparison.shadowRules.totalR}R`);\nlines.push(`Today: ${Math.round(ledger.today.pnlR * 100) / 100}R, ${ledger.today.losses} losses, streak ${ledger.lossStreak}. Paper only.`);\nreturn [{ json: { text: lines.join('\\n') } }];\n"
+      }
+    },
+    {
+      "id": "cl-7",
+      "name": "Review Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        880,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "needsReview-check",
+              "leftValue": "={{ $json.needsReview }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cl-8",
+      "name": "Chart Analyst",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1100,
+        480
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Market snapshot:\n{{ JSON.stringify({ asOf: $('Paper Ledger').item.json.asOf, price: $('Paper Ledger').item.json.price, regime: $('Paper Ledger').item.json.regime, ladder: $('Paper Ledger').item.json.ladder, calendar: $('Paper Ledger').item.json.calendar, timeframes: $('Paper Ledger').item.json.timeframes, candidates: $('Paper Ledger').item.json.candidates, ledger: $('Paper Ledger').item.json.ledger }, null, 1) }}\n\nAssess every candidate against the playbook and pick the best one, or \"none\".",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are the Chart Analyst on a paper-trading desk that applies the Bitcoin methodology Crypto Lifer (Sam) teaches on his daily live streams, distilled from ~760 transcripts (2019-2026).\n\nHis playbook, in order of how consistently he uses it:\n1. Regime: the 200 SMA decides bias on every timeframe. Weekly and daily closes above their 200 SMA = bull; below = bear. \"When you lose the 200, flip bearish.\" Losing one timeframe's 200 sends price to the next timeframe's 200 (the \"200 ladder\"), so higher-timeframe 200s are targets.\n2. \"The Model\" (his 2025-2026 core setup): price above the 200, the 21 SMA above the 200, price goes sideways or pulls back until the 21 touches it; enter there, stop under the 200 or the swing low below it, at least 3:1. The closer to the 200 the lower the risk. Short is the mirror image (\"inverse model\").\n3. 200 SMA close cross (his \"one indicator\", strongest on the 1h): a candle close back above the 200 = long, a close below = short, stop on the other side of the 200.\n4. Daily candle-body reversal: a green candle closing over the prior red body with stochastics low (or the mirror for shorts), stop beyond the wicks. Low hit rate, high reward.\n5. Confluence he looks for: \"tight\" moving averages (21 near 200), Stoch RSI low and turning up for longs (high and turning down for shorts) on the entry timeframe and the one above, hidden bullish divergence on 4h or higher, entries on retests rather than breakout candles.\n6. Exits: take profit when price is far from the 21 SMA with stochastics overbought; price \"always comes back to the 21\".\n7. Calendar: avoid weekends, Monday before 18:00 ET, Friday afternoons, and FOMC/CPI windows.\n\nWhat a lookahead-free backtest of his rules on BTCUSDT 2019-2026 (net of 0.14% round-trip costs) found:\n- Only \"the Model\" on the 4h chart was positive: about +0.19R per trade, ~31% win rate, losing streaks of up to 15. With Stoch RSI timing about +0.25R, but that is the best of ~60 variants, so treat it as an upper bound.\n- The same setups on 15m and 1h lost money after costs. The 200 SMA cross on its own showed no edge.\n- Moving the stop to break-even quickly lowered results on every timeframe. Higher-timeframe regime and calendar filters did not consistently help on 4h.\n- Win rates around 30% are normal for this playbook; his \"68%\"/\"90%\" figures are not supported.\nSo: a good candidate is a clean 4h Model pullback with timing confirmation. Most of the edge comes from letting 3R winners run, not from a high hit rate.\n\nYou receive a market snapshot computed by a deterministic engine, with candidate setups whose entry, stop and targets are already calculated. Judge each candidate against the playbook. Never invent prices or levels. Be specific: cite the snapshot fields (e.g. \"1h stochK 18 and turning up\", \"4h close above 200 SMA\").",
+          "maxIterations": 3
+        }
+      }
+    },
+    {
+      "id": "cl-9",
+      "name": "Analyst Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        1040,
+        700
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "claude-sonnet-5-5"
+        },
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE_ME",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "id": "cl-10",
+      "name": "Analyst Output",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1200,
+        700
+      ],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"marketRead\": {\n      \"type\": \"string\",\n      \"description\": \"Two or three sentences on regime and structure across timeframes\"\n    },\n    \"assessments\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"candidateId\": {\n            \"type\": \"string\"\n          },\n          \"playbookScore\": {\n            \"type\": \"integer\",\n            \"minimum\": 1,\n            \"maximum\": 5\n          },\n          \"confluence\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"string\"\n            }\n          },\n          \"concerns\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"string\"\n            }\n          }\n        },\n        \"required\": [\n          \"candidateId\",\n          \"playbookScore\",\n          \"confluence\",\n          \"concerns\"\n        ]\n      }\n    },\n    \"preferredCandidateId\": {\n      \"type\": \"string\",\n      \"description\": \"Best candidate id, or \\\"none\\\"\"\n    }\n  },\n  \"required\": [\n    \"marketRead\",\n    \"assessments\",\n    \"preferredCandidateId\"\n  ]\n}",
+        "autoFix": false
+      }
+    },
+    {
+      "id": "cl-11",
+      "name": "Skeptic",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1480,
+        480
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Market snapshot:\n{{ JSON.stringify({ asOf: $('Paper Ledger').item.json.asOf, price: $('Paper Ledger').item.json.price, regime: $('Paper Ledger').item.json.regime, ladder: $('Paper Ledger').item.json.ladder, calendar: $('Paper Ledger').item.json.calendar, timeframes: $('Paper Ledger').item.json.timeframes, candidates: $('Paper Ledger').item.json.candidates, ledger: $('Paper Ledger').item.json.ledger }, null, 1) }}\n\nChart Analyst assessment:\n{{ JSON.stringify($json.output, null, 1) }}\n\nChallenge the Analyst's preferred candidate.",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are the Skeptic on a paper-trading desk. Your job is to find the reason NOT to take the trade the Chart Analyst prefers. Research on Crypto Lifer's ~760 streams found these recurring failure modes, which you must check for:\n- A persistent long bias that overrides his own signals; dated bullish targets that repeatedly missed.\n- Trading against the higher timeframe (e.g. longing below the daily 200) and getting chopped up around the 200 SMA.\n- Entering when price is already stretched far from the 21 SMA, or chasing a breakout candle instead of waiting for the retest.\n- Conflicting timeframes (e.g. 1h and 4h stochastics disagree): his own rule is to stand aside.\n- Low-liquidity sessions (weekends, Monday before 18:00 ET, Friday afternoons) and event days (FOMC, CPI).\n- Stops placed at obvious levels, or reward:risk that only reaches 3:1 because of a distant, unlikely target.\n- Unverified claims (\"68%\", \"90% hit the measured move\"): give no weight to pattern odds.\nBacktest context: the 4h Model has at best a small edge (~+0.2R per trade) and a ~30% win rate, so a single loss is not a reason to reject; your job is to filter out the clearly worse-than-average setups. The calendar and higher-timeframe filters did not improve the backtest on their own, so cite them only together with another concrete problem.\nApprove only when you cannot find a material objection. \"reduce\" means the idea is valid but conditions are weaker than usual. Use only the data provided.",
+          "maxIterations": 3
+        }
+      }
+    },
+    {
+      "id": "cl-12",
+      "name": "Skeptic Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        1420,
+        700
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "claude-sonnet-5-5"
+        },
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE_ME",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "id": "cl-13",
+      "name": "Skeptic Output",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1580,
+        700
+      ],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"verdict\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"approve\",\n        \"reduce\",\n        \"reject\"\n      ]\n    },\n    \"strongestObjection\": {\n      \"type\": \"string\"\n    },\n    \"issues\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    }\n  },\n  \"required\": [\n    \"verdict\",\n    \"strongestObjection\",\n    \"issues\"\n  ]\n}",
+        "autoFix": false
+      }
+    },
+    {
+      "id": "cl-14",
+      "name": "Desk Lead",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1860,
+        480
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Market snapshot:\n{{ JSON.stringify({ asOf: $('Paper Ledger').item.json.asOf, price: $('Paper Ledger').item.json.price, regime: $('Paper Ledger').item.json.regime, ladder: $('Paper Ledger').item.json.ladder, calendar: $('Paper Ledger').item.json.calendar, timeframes: $('Paper Ledger').item.json.timeframes, candidates: $('Paper Ledger').item.json.candidates, ledger: $('Paper Ledger').item.json.ledger }, null, 1) }}\n\nChart Analyst:\n{{ JSON.stringify($('Chart Analyst').item.json.output, null, 1) }}\n\nSkeptic:\n{{ JSON.stringify($json.output, null, 1) }}\n\nMake the final decision.",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are the Desk Lead. You read the market snapshot, the Chart Analyst's assessment and the Skeptic's objections, and make the final call for ONE paper trade or none.\nRules:\n- Choose action \"enter\" only if the Analyst rates the candidate 4 or higher AND the Skeptic's verdict is not \"reject\".\n- If the Skeptic says \"reduce\", you may still enter but confidence must be 3 or lower.\n- candidateId must be exactly one of the candidate ids in the snapshot. targetLabel must be one of that candidate's target labels.\n- Skipping is a good outcome. Most bars should be skipped. His own rule: \"you don't always have to be in a trade\".\n- A deterministic risk gate will size the position and can still veto it; you do not set size, entry or stop.",
+          "maxIterations": 3
+        }
+      }
+    },
+    {
+      "id": "cl-15",
+      "name": "Desk Lead Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        1800,
+        700
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "claude-sonnet-5-5"
+        },
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE_ME",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "id": "cl-16",
+      "name": "Desk Lead Output",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1960,
+        700
+      ],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"action\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"enter\",\n        \"skip\"\n      ]\n    },\n    \"candidateId\": {\n      \"type\": \"string\"\n    },\n    \"targetLabel\": {\n      \"type\": \"string\"\n    },\n    \"confidence\": {\n      \"type\": \"integer\",\n      \"minimum\": 1,\n      \"maximum\": 5\n    },\n    \"summary\": {\n      \"type\": \"string\",\n      \"description\": \"One or two sentences explaining the decision\"\n    }\n  },\n  \"required\": [\n    \"action\",\n    \"candidateId\",\n    \"targetLabel\",\n    \"confidence\",\n    \"summary\"\n  ]\n}",
+        "autoFix": false
+      }
+    },
+    {
+      "id": "cl-17",
+      "name": "Risk Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        480
+      ],
+      "parameters": {
+        "jsCode": "// Risk Gate: hard rules the agents cannot override. Levels always come from the\n// Signal Engine candidate, never from model output.\nconst ctx = $('Paper Ledger').first().json;\nconst cfg = ctx.config;\nconst decision = $input.first().json.output;\nconst reasons = [];\n\nconst candidate = ctx.candidates.find((c) => c.id === decision.candidateId);\nif (decision.action !== 'enter') reasons.push(`desk lead decided: ${decision.action}`);\nif (!candidate) reasons.push(`unknown candidate id \"${decision.candidateId}\"`);\n\nlet order = null;\nif (candidate) {\n  const target = candidate.targets.find((t) => t.label === decision.targetLabel) || candidate.targets[0];\n  const riskPerUnit = Math.abs(candidate.entry - candidate.stop);\n  const rr = Math.abs(target.price - candidate.entry) / riskPerUnit;\n  if (rr + 0.01 < cfg.minRewardRisk) reasons.push(`reward:risk ${rr.toFixed(2)} is below ${cfg.minRewardRisk}`);\n\n  // Risk a fixed % of equity; divide by 3 after a losing streak\n  let riskPct = cfg.riskPerTradePct;\n  if (ctx.ledger.lossStreak >= cfg.lossStreakDownsize) riskPct /= 3;\n  const riskUsd = (ctx.ledger.equity * riskPct) / 100;\n  let qty = riskUsd / riskPerUnit;\n  // Leverage cap: shrink the position rather than exceed it\n  const maxNotional = ctx.ledger.equity * cfg.maxLeverage;\n  if (qty * candidate.entry > maxNotional) qty = maxNotional / candidate.entry;\n  const notional = qty * candidate.entry;\n\n  order = {\n    candidateId: candidate.id,\n    setup: candidate.setup,\n    timeframe: candidate.timeframe,\n    direction: candidate.direction,\n    entry: candidate.entry,\n    stop: candidate.stop,\n    target: Math.round(target.price * 100) / 100,\n    targetLabel: target.label,\n    rewardRisk: Math.round(rr * 100) / 100,\n    qty: Math.round(qty * 1e6) / 1e6,\n    notionalUsd: Math.round(notional),\n    leverage: Math.round((notional / ctx.ledger.equity) * 100) / 100,\n    riskUsd: Math.round(qty * riskPerUnit * 100) / 100,\n    riskPerUnit,\n  };\n}\n\nreturn [{ json: { approved: reasons.length === 0, reasons, order, decision } }];\n"
+      }
+    },
+    {
+      "id": "cl-18",
+      "name": "Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2460,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "approved-check",
+              "leftValue": "={{ $json.approved }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cl-19",
+      "name": "Open Paper Trade",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2680,
+        460
+      ],
+      "parameters": {
+        "jsCode": "// Open Paper Trade: records the approved order in the ledger and formats the alert.\nconst { order, decision } = $input.first().json;\nconst ctx = $('Paper Ledger').first().json;\nconst store = $getWorkflowStaticData('global');\nconst lastBar = Date.parse(ctx.timeframes['15m'].closeTime);\n\nstore.ledger.open = {\n  ...order,\n  openedAt: ctx.asOf,\n  lastCheckedBar: lastBar,\n  thesis: decision.summary,\n};\n\nconst arrow = order.direction === 'long' ? 'LONG' : 'SHORT';\nconst text = [\n  `PAPER ${arrow} ${ctx.symbol} (${order.setup}, ${order.timeframe})`,\n  `Entry ${order.entry} | Stop ${order.stop} | Target ${order.target} (${order.targetLabel}, reward:risk ${order.rewardRisk})`,\n  `Size ${order.qty} (${order.notionalUsd} USD, ${order.leverage}x) risking ${order.riskUsd} USD`,\n  `Regime: ${ctx.regime.label} | Confidence: ${decision.confidence}/5`,\n  `Thesis: ${decision.summary}`,\n  `Skeptic: ${$('Skeptic').first().json.output.verdict} - ${$('Skeptic').first().json.output.strongestObjection}`,\n  'Paper trade only. Not financial advice.',\n].join('\\n');\n\nreturn [{ json: { text } }];\n"
+      }
+    },
+    {
+      "id": "cl-20",
+      "name": "Send Trade Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2900,
+        460
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Strategy Config').first().json.telegramChatId }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "id": "cl-21",
+      "name": "Send Trade Update",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        100
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Strategy Config').first().json.telegramChatId }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_ME",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "id": "cl-22",
+      "name": "About This Workflow",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -200
+      ],
+      "parameters": {
+        "width": 860,
+        "height": 300,
+        "content": "## Crypto Lifer Agent Team (paper trading)\nEvery 15 minutes the **Signal Engine** pulls closed BTCUSDT candles (15m to 1w) and looks for the setup distilled from Crypto Lifer's streams that held up in a 2019-2026 backtest: the **4h 21/200 SMA \"Model\"** with Stoch RSI timing. Each new signal is reviewed once by three agents: **Chart Analyst** (playbook fit) -> **Skeptic** (reasons not to) -> **Desk Lead** (final call). A deterministic **Risk Gate** sizes the trade (0.5% risk, 3R minimum, 5x leverage cap) and can veto anything. A shadow book takes every signal mechanically so you can see whether the agents beat the plain rules.\n\nPaper trades only: nothing is sent to an exchange. Ledger state lives in workflow static data and persists only when the workflow is active. Setup: add Anthropic and Telegram credentials, set `telegramChatId` in **Strategy Config**. See examples/crypto-lifer-agent-team/README.md. Not financial advice.\n"
+      }
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Strategy Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Strategy Config": {
+      "main": [
+        [
+          {
+            "node": "Signal Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signal Engine": {
+      "main": [
+        [
+          {
+            "node": "Paper Ledger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Paper Ledger": {
+      "main": [
+        [
+          {
+            "node": "Trade Updates?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Review Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trade Updates?": {
+      "main": [
+        [
+          {
+            "node": "Format Trade Updates",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Format Trade Updates": {
+      "main": [
+        [
+          {
+            "node": "Send Trade Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Review Needed?": {
+      "main": [
+        [
+          {
+            "node": "Chart Analyst",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Chart Analyst": {
+      "main": [
+        [
+          {
+            "node": "Skeptic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skeptic": {
+      "main": [
+        [
+          {
+            "node": "Desk Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Desk Lead": {
+      "main": [
+        [
+          {
+            "node": "Risk Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Risk Gate": {
+      "main": [
+        [
+          {
+            "node": "Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved?": {
+      "main": [
+        [
+          {
+            "node": "Open Paper Trade",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Open Paper Trade": {
+      "main": [
+        [
+          {
+            "node": "Send Trade Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyst Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Chart Analyst",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyst Output": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Chart Analyst",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skeptic Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Skeptic",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skeptic Output": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Skeptic",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Desk Lead Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Desk Lead",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Desk Lead Output": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Desk Lead",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
