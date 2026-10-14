@@ -2536,6 +2536,49 @@ Always be professional and concise.`;
         const systemWarnings = context.warnings.filter(w => w.property === 'systemMessage');
         expect(systemWarnings).toHaveLength(0);
       });
+
+      it('should read system message from options (current agent schema)', () => {
+        context.config = {
+          promptType: 'define',
+          text: 'Summarize the input',
+          options: {
+            systemMessage: 'You are a helpful assistant that analyzes customer feedback.'
+          }
+        };
+
+        NodeSpecificValidators.validateAIAgent(context);
+
+        const hasSysMessageSuggestion = context.suggestions.some(s =>
+          s.toLowerCase().includes('system message')
+        );
+        expect(hasSysMessageSuggestion).toBe(false);
+        const systemWarnings = context.warnings.filter(w => w.property === 'systemMessage');
+        expect(systemWarnings).toHaveLength(0);
+      });
+
+      it('should warn when system message in options is too short', () => {
+        context.config = { options: { systemMessage: 'Help' } };
+
+        NodeSpecificValidators.validateAIAgent(context);
+
+        expect(context.warnings).toContainEqual({
+          type: 'inefficient',
+          property: 'systemMessage',
+          message: 'System message is very short (< 20 characters)',
+          suggestion: 'Consider a more detailed system message to guide the agent\'s behavior'
+        });
+      });
+
+      it('should suggest adding system message when options has none', () => {
+        context.config = { options: {} };
+
+        NodeSpecificValidators.validateAIAgent(context);
+
+        const hasSysMessageSuggestion = context.suggestions.some(s =>
+          s.toLowerCase().includes('system message')
+        );
+        expect(hasSysMessageSuggestion).toBe(true);
+      });
     });
 
     describe('maxIterations validation', () => {

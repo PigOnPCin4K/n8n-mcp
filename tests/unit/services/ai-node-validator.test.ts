@@ -369,6 +369,103 @@ describe('AI Node Validator', () => {
       );
     });
 
+    it('should read systemMessage from options (current agent schema)', () => {
+      const agent: WorkflowNode = {
+        id: 'agent1',
+        name: 'AI Agent',
+        type: '@n8n/n8n-nodes-langchain.agent',
+        typeVersion: 3.1,
+        position: [0, 0],
+        parameters: {
+          promptType: 'define',
+          text: 'Summarize the input',
+          options: {
+            systemMessage: 'You are a helpful assistant that summarizes customer feedback.'
+          }
+        }
+      };
+
+      const workflow: WorkflowJson = {
+        nodes: [agent],
+        connections: {
+          'OpenAI': {
+            'ai_languageModel': [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]]
+          }
+        }
+      };
+
+      const reverseMap = buildReverseConnectionMap(workflow);
+      const issues = validateAIAgent(agent, reverseMap, workflow);
+
+      expect(issues.some(i => i.message.includes('has no systemMessage'))).toBe(false);
+      expect(issues.some(i => i.message.includes('systemMessage is very short'))).toBe(false);
+    });
+
+    it('should info on short systemMessage in options', () => {
+      const agent: WorkflowNode = {
+        id: 'agent1',
+        name: 'AI Agent',
+        type: '@n8n/n8n-nodes-langchain.agent',
+        position: [0, 0],
+        parameters: {
+          promptType: 'auto',
+          options: { systemMessage: 'Help user' }
+        }
+      };
+
+      const workflow: WorkflowJson = {
+        nodes: [agent],
+        connections: {
+          'OpenAI': {
+            'ai_languageModel': [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]]
+          }
+        }
+      };
+
+      const reverseMap = buildReverseConnectionMap(workflow);
+      const issues = validateAIAgent(agent, reverseMap, workflow);
+
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          severity: 'info',
+          message: expect.stringContaining('systemMessage is very short')
+        })
+      );
+      expect(issues.some(i => i.message.includes('has no systemMessage'))).toBe(false);
+    });
+
+    it('should info on missing systemMessage when options has none', () => {
+      const agent: WorkflowNode = {
+        id: 'agent1',
+        name: 'AI Agent',
+        type: '@n8n/n8n-nodes-langchain.agent',
+        position: [0, 0],
+        parameters: {
+          promptType: 'auto',
+          options: {}
+        }
+      };
+
+      const workflow: WorkflowJson = {
+        nodes: [agent],
+        connections: {
+          'OpenAI': {
+            'ai_languageModel': [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]]
+          }
+        }
+      };
+
+      const reverseMap = buildReverseConnectionMap(workflow);
+      const issues = validateAIAgent(agent, reverseMap, workflow);
+
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          severity: 'info',
+          message: expect.stringContaining('has no systemMessage')
+        })
+      );
+    });
+
     it('should error on multiple memory connections', () => {
       const agent: WorkflowNode = {
         id: 'agent1',
